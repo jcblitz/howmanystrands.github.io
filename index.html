@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Christmas Tree String Light Wrapper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0f172a; color: white; font-family: sans-serif; }
+        #canvas-container { width: 100vw; height: 100vh; display: block; }
+        
+        /* Custom Scrollbar for the controls if needed */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #38bdf8;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #475569;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- UI Overlay -->
+    <div class="absolute top-4 left-4 z-10 p-6 rounded-xl glass-panel w-80 max-h-[90vh] overflow-y-auto">
+        <h1 class="text-2xl font-bold mb-4 text-sky-400">Tree Wrapper</h1>
+        
+        <div class="space-y-5">
+            <!-- Height Control -->
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-sm font-medium text-gray-300">Tree Height</label>
+                    <span id="val-height" class="text-sm font-mono text-sky-300">7 ft</span>
+                </div>
+                <input type="range" id="inp-height" min="2" max="20" step="0.5" value="7" class="w-full">
+            </div>
+
+            <!-- Diameter Control -->
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-sm font-medium text-gray-300">Base Diameter</label>
+                    <span id="val-diameter" class="text-sm font-mono text-sky-300">4 ft</span>
+                </div>
+                <input type="range" id="inp-diameter" min="1" max="12" step="0.5" value="4" class="w-full">
+            </div>
+
+            <!-- Gap Control -->
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-sm font-medium text-gray-300">Light Gap</label>
+                    <span id="val-gap" class="text-sm font-mono text-sky-300">6 in</span>
+                </div>
+                <input type="range" id="inp-gap" min="2" max="24" step="1" value="6" class="w-full">
+                <p class="text-xs text-gray-500 mt-1">Distance between loops</p>
+            </div>
+
+            <!-- String Length Control -->
+            <div>
+                <div class="flex justify-between mb-1 items-center">
+                    <label class="text-sm font-medium text-gray-300">String Length</label>
+                    <div class="flex items-baseline group cursor-text">
+                        <input type="number" id="num-string-length" value="50" min="1" max="1000" 
+                               class="w-12 bg-transparent text-right font-mono text-sky-300 border-b border-transparent hover:border-sky-500/50 focus:border-sky-500 outline-none p-0 text-sm transition-colors appearance-none m-0">
+                        <span class="text-sm font-mono text-sky-300 ml-1">ft</span>
+                    </div>
+                </div>
+                <input type="range" id="inp-string-length" min="10" max="150" step="5" value="50" class="w-full">
+                <p class="text-xs text-gray-500 mt-1">Length of one box of lights</p>
+            </div>
+
+            <!-- Stats -->
+            <div class="pt-4 border-t border-gray-700">
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div class="text-gray-400">Total Length:</div>
+                    <div id="stat-length" class="text-right font-mono text-white">-</div>
+                    <div class="text-gray-400">Bulb Count:</div>
+                    <div id="stat-bulbs" class="text-right font-mono text-white">-</div>
+                    <div class="text-sky-400 font-bold mt-2">Boxes Needed:</div>
+                    <div id="stat-needed" class="text-right font-mono text-sky-400 font-bold mt-2">-</div>
+                </div>
+            </div>
+
+            <button id="btn-replay" class="w-full mt-4 py-2 px-4 bg-sky-600 hover:bg-sky-500 text-white font-semibold rounded-lg transition duration-200 shadow-lg">
+                Replay Animation
+            </button>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <!-- Three.js from CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- OrbitControls -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <script>
+        // --- Configuration & State ---
+        const state = {
+            height: 7,      // feet
+            diameter: 4,    // feet
+            gap: 6,         // inches
+            stringLength: 50, // feet
+            animationSpeed: 0.5, // feet per frame (visual speed)
+            isAnimating: true,
+            currentHeight: 0
+        };
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x050714); // Deep night blue
+        scene.fog = new THREE.FogExp2(0x050714, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(15, 8, 15);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.maxPolarAngle = Math.PI / 2 - 0.05; // Don't allow going below ground
+
+        // --- Lighting ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+        scene.add(ambientLight);
+
+        const moonLight = new THREE.DirectionalLight(0xaaccff, 0.6);
+        moonLight.position.set(10, 20, 10);
+        moonLight.castShadow = true;
+        moonLight.shadow.mapSize.width = 2048;
+        moonLight.shadow.mapSize.height = 2048;
+        scene.add(moonLight);
+
+        // Point lights for tree glow (simulating the string lights emitting light)
+        const treeGlow = new THREE.PointLight(0xffaa00, 0, 20);
+        treeGlow.position.set(0, 3, 0);
+        scene.add(treeGlow);
+
+        // --- Objects ---
+
+        // Group to hold the tree parts
+        const treeGroup = new THREE.Group();
+        scene.add(treeGroup);
+
+        // Floor
+        const floorGeo = new THREE.PlaneGeometry(100, 100);
+        const floorMat = new THREE.MeshStandardMaterial({ 
+            color: 0xddddff, 
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // Materials
+        const pineMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x0d4a1e, 
+            roughness: 0.9,
+            flatShading: true
+        });
+        
+        const trunkMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x3e2723, 
+            roughness: 1.0 
+        });
+
+        // Reusable geometry variables
+        let lightPointsMesh = null;
+        let lightLineMesh = null;
+        let treeMesh = null;
+        let trunkMesh = null;
+        let starMesh = null;
+
+        // Light Colors (Red, Green, Gold, Blue)
+        const bulbColors = [
+            new THREE.Color(1, 0.2, 0.2),
+            new THREE.Color(0.2, 1, 0.2),
+            new THREE.Color(1, 0.8, 0.2),
+            new THREE.Color(0.2, 0.4, 1)
+        ];
+
+        // --- Core Logic ---
+
+        function generateScene() {
+            // Clear existing tree group
+            while(treeGroup.children.length > 0){ 
+                const obj = treeGroup.children[0];
+                if (obj.geometry) obj.geometry.dispose();
+                treeGroup.remove(obj); 
+            }
+
+            const H = state.height;
+            const R = state.diameter / 2;
+            
+            // 1. Create Trunk
+            const trunkH = H * 0.15;
+            const trunkW = R * 0.2;
+            const trunkGeo = new THREE.CylinderGeometry(trunkW * 0.7, trunkW, trunkH, 8);
+            trunkMesh = new THREE.Mesh(trunkGeo, trunkMaterial);
+            trunkMesh.position.y = trunkH / 2;
+            trunkMesh.castShadow = true;
+            treeGroup.add(trunkMesh);
+
+            // 2. Create Pine Cone
+            // To make the spiral math easier, we place the cone such that its base is at Y = trunkH
+            const coneH = H; // Visual height of the green part
+            const coneGeo = new THREE.ConeGeometry(R, coneH, 32, 1, true); // Open ended for better texture mapping if needed, but here simple
+            // By default Cylinder/Cone center is at height/2. 
+            // We want the base at trunkH.
+            // So center should be at trunkH + coneH/2.
+            
+            // Actually, let's construct the cone geometry but offset coordinates so local (0,0,0) is the base center
+            coneGeo.translate(0, coneH/2, 0); 
+            
+            treeMesh = new THREE.Mesh(coneGeo, pineMaterial);
+            treeMesh.position.y = trunkH;
+            treeMesh.castShadow = true;
+            treeMesh.receiveShadow = true;
+            treeGroup.add(treeMesh);
+
+            // 3. Create Star
+            const starGeo = new THREE.IcosahedronGeometry(R * 0.15, 0);
+            const starMat = new THREE.MeshBasicMaterial({ color: 0xffd700 });
+            starMesh = new THREE.Mesh(starGeo, starMat);
+            starMesh.position.y = trunkH + coneH;
+            treeGroup.add(starMesh);
+
+            // 4. Calculate Light Path (The Helix)
+            const gapFt = state.gap / 12;
+            const totalTurns = coneH / gapFt;
+            const pointsPerTurn = 40; // Resolution of the curve
+            const totalPoints = Math.ceil(totalTurns * pointsPerTurn);
+            
+            const positions = [];
+            const colors = [];
+            const sizes = [];
+
+            let totalLength = 0;
+            let prevPos = new THREE.Vector3();
+
+            // We generate points from bottom (y=0 relative to cone base) to top (y=coneH)
+            for (let i = 0; i <= totalPoints; i++) {
+                const pct = i / totalPoints;
+                const h = pct * coneH; // Current height relative to cone base
+                
+                // Radius decreases as we go up
+                // Add a small offset (0.05) so lights float slightly off the surface
+                const currentRadius = (R * (1 - pct)) + 0.05;
+
+                // Angle
+                // 2 * PI * totalTurns * pct
+                const angle = totalTurns * Math.PI * 2 * pct;
+
+                const x = Math.cos(angle) * currentRadius;
+                const z = Math.sin(angle) * currentRadius;
+                const y = h + trunkH; // Add trunk height to lift lights up
+
+                const pos = new THREE.Vector3(x, y, z);
+                positions.push(x, y, z);
+
+                // Color Logic
+                const color = bulbColors[i % bulbColors.length];
+                colors.push(color.r, color.g, color.b);
+
+                // Calculate Length
+                if (i > 0) {
+                    totalLength += pos.distanceTo(prevPos);
+                }
+                prevPos.copy(pos);
+            }
+
+            // Update UI Stats
+            document.getElementById('stat-length').innerText = totalLength.toFixed(1) + ' ft';
+            document.getElementById('stat-bulbs').innerText = totalPoints;
+
+            // Calculate boxes needed
+            const boxes = Math.ceil(totalLength / state.stringLength);
+            document.getElementById('stat-needed').innerText = boxes + ' box' + (boxes !== 1 ? 'es' : '');
+
+            // 5. Build Geometry for Lights
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+            // A. The "Wire" (Thin line)
+            const lineMat = new THREE.LineBasicMaterial({ 
+                color: 0x113311, 
+                opacity: 0.6, 
+                transparent: true 
+            });
+            lightLineMesh = new THREE.Line(geometry, lineMat);
+            lightLineMesh.geometry.setDrawRange(0, 0); // Start hidden
+            treeGroup.add(lightLineMesh);
+
+            // B. The "Bulbs" (Points)
+            // Use a texture for round points
+            const sprite = new THREE.TextureLoader().load('https://threejs.org/examples/textures/sprites/disc.png');
+
+            const pointsMat = new THREE.PointsMaterial({
+                size: 0.15,
+                vertexColors: true,
+                map: sprite,
+                alphaTest: 0.5,
+                transparent: true,
+                opacity: 0.9,
+                sizeAttenuation: true
+            });
+
+            lightPointsMesh = new THREE.Points(geometry, pointsMat);
+            lightPointsMesh.geometry.setDrawRange(0, 0); // Start hidden
+            treeGroup.add(lightPointsMesh);
+
+            // Reset Animation State
+            state.currentPointIndex = 0;
+            state.totalPoints = totalPoints;
+            state.isAnimating = true;
+            
+            // Adjust camera slightly based on tree height
+            const targetY = (trunkH + coneH) / 2;
+            controls.target.set(0, targetY, 0);
+            // If tree is huge, back up; if small, zoom in.
+            const dist = Math.max(state.height * 2, 10);
+            // Smoothly moving camera is tricky without tweening lib, 
+            // just setting position might be jarring. Let's leave camera manual for user
+            // but update the target so it rotates around center.
+        }
+
+        // --- Animation Loop ---
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = Date.now() * 0.001;
+
+            if (state.isAnimating && lightPointsMesh) {
+                // Unwrap animation
+                // Reveal 'x' number of points per frame
+                const pointsPerFrame = Math.max(1, Math.floor(state.totalPoints / 120)); // Finish in ~2 seconds
+                
+                state.currentPointIndex += pointsPerFrame;
+
+                if (state.currentPointIndex >= state.totalPoints) {
+                    state.currentPointIndex = state.totalPoints;
+                    state.isAnimating = false;
+                    // Turn on the star glow when done
+                    treeGlow.intensity = 1.5;
+                } else {
+                    treeGlow.intensity = (state.currentPointIndex / state.totalPoints) * 0.5;
+                }
+
+                lightLineMesh.geometry.setDrawRange(0, state.currentPointIndex);
+                lightPointsMesh.geometry.setDrawRange(0, state.currentPointIndex);
+            }
+
+            // Twinkle effect (only for fully rendered lights)
+            if (!state.isAnimating && lightPointsMesh) {
+                // We can't easily update individual buffer attributes cheaply every frame for 1000s of points without overhead.
+                // Instead, let's pulse the global size or opacity slightly, or rotate the star.
+                starMesh.rotation.y = time;
+                starMesh.rotation.z = Math.sin(time * 2) * 0.1;
+                
+                // Pulse the ambient glow
+                treeGlow.intensity = 1.5 + Math.sin(time * 3) * 0.2;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // --- Input Handling ---
+
+        const inpHeight = document.getElementById('inp-height');
+        const inpDiameter = document.getElementById('inp-diameter');
+        const inpGap = document.getElementById('inp-gap');
+        
+        // String Length Inputs (Slider + Text Input)
+        const inpStringLength = document.getElementById('inp-string-length');
+        const numStringLength = document.getElementById('num-string-length');
+        
+        const valHeight = document.getElementById('val-height');
+        const valDiameter = document.getElementById('val-diameter');
+        const valGap = document.getElementById('val-gap');
+        // valStringLength is removed in favor of numStringLength
+
+        function updateParams() {
+            state.height = parseFloat(inpHeight.value);
+            state.diameter = parseFloat(inpDiameter.value);
+            state.gap = parseFloat(inpGap.value);
+            
+            // Use the slider value if it was the source of the event, otherwise trust state/input
+            // However, easiest way is to update state from the active input in specific listeners
+            // Here we just refresh UI labels for the others
+            valHeight.innerText = state.height + ' ft';
+            valDiameter.innerText = state.diameter + ' ft';
+            valGap.innerText = state.gap + ' in';
+            
+            // We don't overwrite numStringLength.value here to avoid cursor jumping if user is typing
+            // instead we handle that in specific listeners below
+
+            generateScene();
+        }
+
+        // Standard sliders
+        inpHeight.addEventListener('input', updateParams);
+        inpDiameter.addEventListener('input', updateParams);
+        inpGap.addEventListener('input', updateParams);
+
+        // Special handling for synchronized String Length inputs
+        inpStringLength.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            state.stringLength = val;
+            numStringLength.value = val; // Update the text box
+            updateParams();
+        });
+
+        numStringLength.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            if(!isNaN(val) && val > 0) {
+                state.stringLength = val;
+                // Only update slider if within range, but don't constrain the text input
+                // This allows users to type "500" even if slider max is "150"
+                if(val >= 10 && val <= 150) {
+                    inpStringLength.value = val;
+                }
+                updateParams();
+            }
+        });
+
+        document.getElementById('btn-replay').addEventListener('click', () => {
+            state.currentPointIndex = 0;
+            state.isAnimating = true;
+            if(lightPointsMesh) {
+                lightPointsMesh.geometry.setDrawRange(0, 0);
+                lightLineMesh.geometry.setDrawRange(0, 0);
+            }
+        });
+
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initial Launch
+        generateScene();
+        animate();
+
+    </script>
+</body>
+</html>
